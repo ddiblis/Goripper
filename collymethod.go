@@ -6,7 +6,7 @@ import (
 	"github.com/gocolly/colly"
 )
 
-func Main() {
+func main() {
 	Pages("https://www.mangareader.net/tate-no-yuusha-no-nariagari/1")
 
 	// channel := make(chan string)
@@ -22,9 +22,9 @@ func Pages(pageURL string) {
 		colly.Async(true),
 	)
 
-	c.OnHTML("table.d48", func(e *colly.HTMLElement) {
-		e.ForEach("a", func(_ int, o *colly.HTMLElement) {
-			fmt.Println(e.Request.AbsoluteURL(o.Attr("href")))
+	c.OnHTML("div.mI", func(e *colly.HTMLElement) {
+		e.ForEach("img", func(_ int, o *colly.HTMLElement) {
+			fmt.Println(e.Request.AbsoluteURL(o.Attr("src")))
 		})
 	})
 
@@ -32,7 +32,7 @@ func Pages(pageURL string) {
 		fmt.Println("Visiting", r.URL)
 	})
 
-	c.Visit()
+	c.Visit(pageURL)
 
 	c.Wait()
 
