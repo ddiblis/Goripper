@@ -2,55 +2,75 @@ package main
 
 import (
 	"fmt"
-
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/gocolly/colly"
 )
 
+type info struct {
+	name    string
+	chNum   string
+	pageNum string
+}
+
 func main() {
+	//run("tate-no-yuusha-no-nariagari")
+	run(os.Args[len(os.Args)-1])
+}
 
-	chanchapter := make(chan string)
-
-	chanpage := make(chan string)
-
-	chapterCollector := Chapters(chanchapter)
-
-	pageCollector := Pages(chanpage)
+func run(seriesName string) {
 
 	var (
 		chapwg sync.WaitGroup
 		pagewg sync.WaitGroup
 	)
 
-	for chapurl := range chanchapter {
-		chapwg.Add(1)
-		go Pages(chapurl, &chapwg)
-	}
+	seriesURL := fmt.Sprintf("http://www.mangapanda.com/%s", seriesName)
+	chanChapter := make(chan string)
+	chanPage := make(chan string)
+	chapterCollector := Chapters(seriesURL, chanChapter)
+
+	go func() {
+		defer close(chanPage)
+		for chapURL := range chanChapter {
+			chapwg.Add(1)
+			go Pages(chapURL, chanPage, &chapwg)
+		}
+		chapwg.Wait()
+	}()
 
 	chapterCollector.Wait()
-	chapwg.Wait()
+	// close(chanPage)
 
-	for pageurl := range chanpage {
+	for pageURL := range chanPage {
 		pagewg.Add(1)
-		go Images(pageurl, &pagewg)
+		go Images(pageURL, &pagewg)
 	}
 
-	pageCollector.Wait()
 	pagewg.Wait()
 }
 
-// ImagesChannel : Fed img src from function Pages then creates a channel for page image urls
-// func ImagesChannel() {
-//
-// }
-//
-// func Download_Image() {
-//
-// }
+func createInfo(pageURL string) (pageInfo *info) {
+
+	structURL := strings.Split(pageURL, "/")
+	if len(structURL) < 6 {
+		structURL = append(structURL, "1")
+	}
+
+	pageInfo = &info{
+		name:    structURL[3],
+		chNum:   structURL[4],
+		pageNum: structURL[5],
+	}
+	return
+}
 
 // Images recieves url to pages and searches for the link to the image
 func Images(pageURL string, pagewg *sync.WaitGroup) {
+
+	pageInfo := createInfo(pageURL)
 
 	defer pagewg.Done()
 	collector := colly.NewCollector(
@@ -59,19 +79,19 @@ func Images(pageURL string, pagewg *sync.WaitGroup) {
 
 	collector.OnHTML("div#imgholder", func(e *colly.HTMLElement) {
 		e.ForEach("img", func(_ int, o *colly.HTMLElement) {
-			fmt.Println(e.Request.AbsoluteURL(o.Attr("src")))
+			//fmt.Println(e.Request.AbsoluteURL(o.Attr("src")))
 		})
 	})
 
 	collector.Visit(pageURL)
-
 	collector.Wait()
-
+	fmt.Printf("PageNumber: %v\n", pageInfo.pageNum)
 }
 
 // Pages : Parses html for img src link
-func Pages(pg chan string, chapwg *sync.WaitGroup) *colly.Collector {
+func Pages(chapURL string, pg chan string, chapwg *sync.WaitGroup) {
 
+	// defer fmt.Println("Closing Pages")
 	defer chapwg.Done()
 	collector := colly.NewCollector(
 		colly.Async(true),
@@ -83,18 +103,14 @@ func Pages(pg chan string, chapwg *sync.WaitGroup) *colly.Collector {
 		})
 	})
 
-	collector.Visit(chapterURL)
-
+	collector.Visit(chapURL)
 	collector.Wait()
-
-	return collector
-
 }
 
 // Chapters : parses the chapters and returns pages through a channel
-func Chapters(ch chan string) *colly.Collector {
+func Chapters(seriesURL string, ch chan string) *colly.Collector {
 
-	seriesURL := "http://www.mangapanda.com/tate-no-yuusha-no-nariagari"
+	//seriesURL := "http://www.mangapanda.com/tate-no-yuusha-no-nariagari"
 
 	collector := colly.NewCollector(
 		colly.Async(true),
