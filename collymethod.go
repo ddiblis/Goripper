@@ -3,61 +3,115 @@ package main
 import (
 	"fmt"
 
+	"sync"
+
 	"github.com/gocolly/colly"
 )
 
 func main() {
-	Pages("https://www.mangareader.net/tate-no-yuusha-no-nariagari/1")
 
-	// channel := make(chan string)
-	// Chapters(channel)
-	// insert for loop here using channel
-	// increment wg then go Pages(page, wg)
-	// wg.Wait()
+	chanchapter := make(chan string)
+
+	chanpage := make(chan string)
+
+	chapterCollector := Chapters(chanchapter)
+
+	pageCollector := Pages(chanpage)
+
+	var (
+		chapwg sync.WaitGroup
+		pagewg sync.WaitGroup
+	)
+
+	for chapurl := range chanchapter {
+		chapwg.Add(1)
+		go Pages(chapurl, &chapwg)
+	}
+
+	chapterCollector.Wait()
+	chapwg.Wait()
+
+	for pageurl := range chanpage {
+		pagewg.Add(1)
+		go Images(pageurl, &pagewg)
+	}
+
+	pageCollector.Wait()
+	pagewg.Wait()
 }
 
-func Pages(pageURL string) {
+// ImagesChannel : Fed img src from function Pages then creates a channel for page image urls
+// func ImagesChannel() {
+//
+// }
+//
+// func Download_Image() {
+//
+// }
 
-	c := colly.NewCollector(
+// Images recieves url to pages and searches for the link to the image
+func Images(pageURL string, pagewg *sync.WaitGroup) {
+
+	defer pagewg.Done()
+	collector := colly.NewCollector(
 		colly.Async(true),
 	)
 
-	c.OnHTML("div.mI", func(e *colly.HTMLElement) {
+	collector.OnHTML("div#imgholder", func(e *colly.HTMLElement) {
 		e.ForEach("img", func(_ int, o *colly.HTMLElement) {
 			fmt.Println(e.Request.AbsoluteURL(o.Attr("src")))
 		})
 	})
 
-	c.OnRequest(func(r *colly.Request) {
-		fmt.Println("Visiting", r.URL)
-	})
+	collector.Visit(pageURL)
 
-	c.Visit(pageURL)
-
-	c.Wait()
+	collector.Wait()
 
 }
 
-// Chapters parses the chapters and returns pages through a channel
-func Chapters() {
+// Pages : Parses html for img src link
+func Pages(pg chan string, chapwg *sync.WaitGroup) *colly.Collector {
 
-	baseURL := "https://www.mangareader.net/tate-no-yuusha-no-nariagari"
-
-	c := colly.NewCollector(
+	defer chapwg.Done()
+	collector := colly.NewCollector(
 		colly.Async(true),
 	)
 
-	c.OnHTML("table.d48", func(e *colly.HTMLElement) {
-		e.ForEach("a", func(_ int, o *colly.HTMLElement) {
-			fmt.Println(e.Request.AbsoluteURL(o.Attr("href")))
+	collector.OnHTML("select#pageMenu", func(e *colly.HTMLElement) {
+		e.ForEach("option", func(_ int, o *colly.HTMLElement) {
+			pg <- e.Request.AbsoluteURL(o.Attr("value"))
 		})
 	})
 
-	c.OnRequest(func(r *colly.Request) {
+	collector.Visit(chapterURL)
+
+	collector.Wait()
+
+	return collector
+
+}
+
+// Chapters : parses the chapters and returns pages through a channel
+func Chapters(ch chan string) *colly.Collector {
+
+	seriesURL := "http://www.mangapanda.com/tate-no-yuusha-no-nariagari"
+
+	collector := colly.NewCollector(
+		colly.Async(true),
+	)
+
+	collector.OnHTML("table#listing", func(e *colly.HTMLElement) {
+		defer close(ch)
+		e.ForEach("a", func(_ int, o *colly.HTMLElement) {
+			ch <- e.Request.AbsoluteURL(o.Attr("href"))
+		})
+	})
+
+	collector.OnRequest(func(r *colly.Request) {
 		fmt.Println("Visiting", r.URL)
 	})
 
-	c.Visit(baseURL)
+	collector.Visit(seriesURL)
 
-	c.Wait()
+	return collector
 }
