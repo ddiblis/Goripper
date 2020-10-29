@@ -32,24 +32,21 @@ func run(seriesName string) {
 	chanPage := make(chan string)
 	chapterCollector := Chapters(seriesURL, chanChapter)
 
-	go func() {
-		defer close(chanPage)
-		for chapURL := range chanChapter {
-			chapwg.Add(1)
-			go Pages(chapURL, chanPage, &chapwg)
-		}
-		chapwg.Wait()
-	}()
-
+	go runOne(chanPage, chanChapter, Pages, &chapwg)
 	chapterCollector.Wait()
-	// close(chanPage)
+	runOne(nil, chanPage, Images, &pagewg)
+}
 
-	for pageURL := range chanPage {
-		pagewg.Add(1)
-		go Images(pageURL, &pagewg)
+func runOne(toClose chan string, toIter chan string, toRun func(string, chan string, *sync.WaitGroup), wg *sync.WaitGroup) {
+	
+	if toClose != nil {
+		defer close(toClose)
 	}
-
-	pagewg.Wait()
+	for url := range toIter {
+		wg.Add(1)
+		go toRun(url, toClose, wg)
+	}
+	wg.Wait()
 }
 
 func createInfo(pageURL string) (pageInfo *info) {
@@ -68,7 +65,7 @@ func createInfo(pageURL string) (pageInfo *info) {
 }
 
 // Images recieves url to pages and searches for the link to the image
-func Images(pageURL string, pagewg *sync.WaitGroup) {
+func Images(pageURL string, channel chan string, pagewg *sync.WaitGroup) {
 
 	pageInfo := createInfo(pageURL)
 
