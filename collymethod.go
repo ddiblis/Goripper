@@ -2,53 +2,21 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/gocolly/colly"
+	"github.com/schollz/progressbar/v3"
 )
 
-type info struct {
-	name    string
-	chNum   string
-	pageNum string
-}
-
 func main() {
-	//run("tate-no-yuusha-no-nariagari")
 	run(os.Args[len(os.Args)-1])
 }
 
-func run(seriesName string) {
-
-	var (
-		chapwg sync.WaitGroup
-		pagewg sync.WaitGroup
-	)
-
-	seriesURL := fmt.Sprintf("http://www.mangapanda.com/%s", seriesName)
-	chanChapter := make(chan string)
-	chanPage := make(chan string)
-	chapterCollector := Chapters(seriesURL, chanChapter)
-
-	go runOne(chanPage, chanChapter, Pages, &chapwg)
-	chapterCollector.Wait()
-	runOne(nil, chanPage, Images, &pagewg)
-}
-
-func runOne(toClose chan string, toIter chan string, toRun func(string, chan string, *sync.WaitGroup), wg *sync.WaitGroup) {
-	
-	if toClose != nil {
-		defer close(toClose)
-	}
-	for url := range toIter {
-		wg.Add(1)
-		go toRun(url, toClose, wg)
-	}
-	wg.Wait()
-}
-
+// createInfo extracts pageNUm, chapterNum, and name of series from the URL
 func createInfo(pageURL string) (pageInfo *info) {
 
 	structURL := strings.Split(pageURL, "/")
@@ -61,35 +29,42 @@ func createInfo(pageURL string) (pageInfo *info) {
 		chNum:   structURL[4],
 		pageNum: structURL[5],
 	}
+
 	return
 }
 
-// Images recieves url to pages and searches for the link to the image
-func Images(pageURL string, channel chan string, pagewg *sync.WaitGroup) {
+// Chapters : parses the chapters and returns pages through a channel
+func Chapters(seriesURL string, ch chan string) (collector *colly.Collector) {
 
-	pageInfo := createInfo(pageURL)
-
-	defer pagewg.Done()
-	collector := colly.NewCollector(
+	collector = colly.NewCollector(
 		colly.Async(true),
 	)
 
-	collector.OnHTML("div#imgholder", func(e *colly.HTMLElement) {
-		e.ForEach("img", func(_ int, o *colly.HTMLElement) {
-			//fmt.Println(e.Request.AbsoluteURL(o.Attr("src")))
+	// folderInfo := createInfo(chapURL)
+
+	// os.MkdirAll()
+
+	collector.OnHTML("table#listing", func(e *colly.HTMLElement) {
+		defer close(ch)
+		e.ForEach("a", func(_ int, o *colly.HTMLElement) {
+			ch <- e.Request.AbsoluteURL(o.Attr("href"))
 		})
 	})
 
-	collector.Visit(pageURL)
-	collector.Wait()
-	fmt.Printf("PageNumber: %v\n", pageInfo.pageNum)
+	collector.Visit(seriesURL)
+
+	return
 }
 
 // Pages : Parses html for img src link
 func Pages(chapURL string, pg chan string, chapwg *sync.WaitGroup) {
 
-	// defer fmt.Println("Closing Pages")
 	defer chapwg.Done()
+
+	info := createInfo(chapURL)
+	path := info.name + "/" + info.chNum
+	os.MkdirAll(path, os.FileMode(0755))
+
 	collector := colly.NewCollector(
 		colly.Async(true),
 	)
@@ -104,27 +79,46 @@ func Pages(chapURL string, pg chan string, chapwg *sync.WaitGroup) {
 	collector.Wait()
 }
 
-// Chapters : parses the chapters and returns pages through a channel
-func Chapters(seriesURL string, ch chan string) *colly.Collector {
+// Images recieves url to pages and searches for the link to the image
+func Images(pageURL string, img chan imageRef, pagewg *sync.WaitGroup) {
 
-	//seriesURL := "http://www.mangapanda.com/tate-no-yuusha-no-nariagari"
+	defer pagewg.Done()
 
 	collector := colly.NewCollector(
 		colly.Async(true),
 	)
 
-	collector.OnHTML("table#listing", func(e *colly.HTMLElement) {
-		defer close(ch)
-		e.ForEach("a", func(_ int, o *colly.HTMLElement) {
-			ch <- e.Request.AbsoluteURL(o.Attr("href"))
+	collector.OnHTML("div#imgholder", func(e *colly.HTMLElement) {
+		e.ForEach("img", func(_ int, o *colly.HTMLElement) {
+			img <- imageRef{e.Request.AbsoluteURL(o.Attr("src")), pageURL}
 		})
 	})
 
-	collector.OnRequest(func(r *colly.Request) {
-		fmt.Println("Visiting", r.URL)
-	})
+	collector.Visit(pageURL)
+	collector.Wait()
+}
 
-	collector.Visit(seriesURL)
+// DownloadImg downloads the image
+func DownloadImg(imgURL imageRef, imagewg *sync.WaitGroup) {
 
-	return collector
+	defer imagewg.Done()
+
+	pageInfo := createInfo(imgURL.PageURL)
+	path := pageInfo.name + "/" + pageInfo.chNum
+	fileName := path + "/" + pageInfo.pageNum + ".jpg"
+
+	resp, _ := http.Get(imgURL.ImgURL)
+
+	defer resp.Body.Close()
+
+	file, _ := os.Create(fileName)
+
+	defer file.Close()
+
+	bar := progressbar.DefaultBytes(
+		resp.ContentLength,
+		fmt.Sprintf("Downloading %v", fileName),
+	)
+
+	io.Copy(io.MultiWriter(file, bar), resp.Body)
 }
