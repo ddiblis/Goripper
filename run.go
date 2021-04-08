@@ -35,16 +35,16 @@ func run(seriesName string) {
 		imagewg sync.WaitGroup
 	)
 
+	workers := make(chan bool, 4)
 	go func() {
 		defer close(chanPage)
 		for chapURL := range chanChapter {
 			chapwg.Add(1)
-			go Pages(chapURL, chanPage, &chapwg)
+			workers <- false
+			go Pages(chapURL, chanPage, &chapwg, workers)
 		}
 		chapwg.Wait()
 	}()
-
-	chapterCollector.Wait()
 
 	go func() {
 		defer close(chanImage)
@@ -55,10 +55,14 @@ func run(seriesName string) {
 		pagewg.Wait()
 	}()
 
-	for imgURL := range chanImage {
-		imagewg.Add(1)
-		go DownloadImg(imgURL, &imagewg)
-	}
+	go func() {
+		for imgURL := range chanImage {
+			imagewg.Add(1)
+			go DownloadImg(imgURL, &imagewg)
+		}
+	}()
+
+	chapterCollector.Wait()
 	imagewg.Wait()
 
 	// go runOne(chanPage, chanChapter, Pages, &chapwg)

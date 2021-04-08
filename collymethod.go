@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/gocolly/colly"
-	"github.com/schollz/progressbar/v3"
 )
 
 func main() {
@@ -57,7 +56,7 @@ func Chapters(seriesURL string, ch chan string) (collector *colly.Collector) {
 }
 
 // Pages : Parses html for img src link
-func Pages(chapURL string, pg chan string, chapwg *sync.WaitGroup) {
+func Pages(chapURL string, pg chan string, chapwg *sync.WaitGroup, workers chan bool) {
 
 	defer chapwg.Done()
 
@@ -77,6 +76,8 @@ func Pages(chapURL string, pg chan string, chapwg *sync.WaitGroup) {
 
 	collector.Visit(chapURL)
 	collector.Wait()
+	fmt.Printf("Completed parsing Chapter %v\n", info.chNum)
+	<-workers
 }
 
 // Images recieves url to pages and searches for the link to the image
@@ -108,17 +109,16 @@ func DownloadImg(imgURL imageRef, imagewg *sync.WaitGroup) {
 	fileName := path + "/" + pageInfo.pageNum + ".jpg"
 
 	resp, _ := http.Get(imgURL.ImgURL)
-
-	defer resp.Body.Close()
-
 	file, _ := os.Create(fileName)
 
 	defer file.Close()
+	defer resp.Body.Close()
 
-	bar := progressbar.DefaultBytes(
-		resp.ContentLength,
-		fmt.Sprintf("Downloading %v", fileName),
-	)
+	// bar := progressbar.DefaultBytes(
+	// 	resp.ContentLength,
+	// 	fmt.Sprintf("Downloading %v", fileName),
+	// )
 
-	io.Copy(io.MultiWriter(file, bar), resp.Body)
+	// io.Copy(io.MultiWriter(file, bar), resp.Body)
+	io.Copy(file, resp.Body)
 }
